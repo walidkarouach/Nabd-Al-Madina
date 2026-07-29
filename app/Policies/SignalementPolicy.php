@@ -2,6 +2,7 @@
 
 namespace App\Policies;
 
+use App\Enums\UserRole;
 use App\Models\Signalement;
 use App\Models\User;
 
@@ -13,11 +14,11 @@ class SignalementPolicy
      */
     public function view(User $user, Signalement $signalement): bool
     {
-        if ($user->role === 'citoyen') {
+        if ($user->role === UserRole::Citoyen) {
             return $user->id === $signalement->user_id;
         }
 
-        if ($user->role === 'agent_municipal') {
+        if ($user->role === UserRole::AgentMunicipal) {
             return $user->department_id !== null
                 && $user->department_id === $signalement->department_id;
         }
@@ -26,7 +27,7 @@ class SignalementPolicy
     }
 
     /**
-     * Tout utilisateur authentifié (citoyen) peut créer un signalement.
+     * Tout utilisateur authentifié peut créer un signalement.
      */
     public function create(User $user): bool
     {
@@ -34,23 +35,23 @@ class SignalementPolicy
     }
 
     /**
-     * Seul un agent municipal (de son département) peut modifier
-     * un signalement (statut, department, rattachement incident).
+     * Seul un agent municipal du même département peut modifier
+     * un signalement.
      */
     public function update(User $user, Signalement $signalement): bool
     {
-        return $user->role === 'agent_municipal'
+        return $user->role === UserRole::AgentMunicipal
             && $user->department_id !== null
             && $user->department_id === $signalement->department_id;
     }
 
     /**
-     * Suppression réservée à l'agent de son département (à ajuster
-     * selon règles métier si besoin de restrictions supplémentaires).
+     * Seul un agent municipal du même département peut supprimer
+     * un signalement.
      */
     public function delete(User $user, Signalement $signalement): bool
     {
-        return $user->role === 'agent_municipal'
+        return $user->role === UserRole::AgentMunicipal
             && $user->department_id !== null
             && $user->department_id === $signalement->department_id;
     }
