@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\SignalementController;
+use App\Http\Controllers\Api\SignalementSimilarityController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/register', [AuthController::class, 'register']);
@@ -18,4 +19,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::put('/signalements/{signalement}', [SignalementController::class, 'update']);
     Route::patch('/signalements/{signalement}', [SignalementController::class, 'update']);
     Route::patch('/signalements/{signalement}/status', [SignalementController::class, 'updateStatus']);
+
+    // Endpoint US4 réservé aux agents municipaux
+    Route::middleware('role:agent_municipal')->group(function () {
+        Route::get('/signalements/{signalement}/similaires', [SignalementSimilarityController::class, 'index']);
+    });
 });

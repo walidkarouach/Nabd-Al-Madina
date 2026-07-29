@@ -76,6 +76,23 @@ class SignalementPolicy
     }
 
     /**
+     * Seul un agent municipal du même département (ou admin) peut rechercher les signalements similaires.
+     */
+    public function viewSimilaires(User $user, Signalement $signalement): bool
+    {
+        if ($user->role === UserRole::AgentMunicipal) {
+            return $signalement->department_id === null
+                || ($user->department_id !== null && $user->department_id === $signalement->department_id);
+        }
+
+        if ($user->role === UserRole::Admin) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * Seul un agent municipal du même département peut supprimer un signalement.
      */
     public function delete(User $user, Signalement $signalement): bool
