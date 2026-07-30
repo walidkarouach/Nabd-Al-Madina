@@ -2,12 +2,16 @@
 
 namespace App\Services\AI;
 
-use App\Enums\SignalementPriority;
 use App\Models\Departement;
 use App\Models\Signalement;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Throwable;
+use Illuminate\Http\Client\ConnectionException;
+
+
+
+
 
 class SignalementAnalyzer
 {
@@ -56,11 +60,16 @@ class SignalementAnalyzer
                 return $this->markAsFailed($signalement);
             }
 
-            return $this->persist($signalement, $parsedData);
-        } catch (Throwable $e) {
-            Log::error("Error analyzing signalement {$signalement->id}: " . $e->getMessage());
+          } catch (ConnectionException $e) {
+           Log::error("AI timeout for signalement {$signalement->id}: " . $e->getMessage());
+
             return $this->markAsFailed($signalement);
-        }
+
+          } catch (Throwable $e) {
+           Log::error("Error analyzing signalement {$signalement->id}: " . $e->getMessage());
+
+            return $this->markAsFailed($signalement);
+}
     }
 
     /**
