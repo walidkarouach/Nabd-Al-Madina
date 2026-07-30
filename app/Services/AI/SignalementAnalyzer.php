@@ -60,6 +60,7 @@ class SignalementAnalyzer
                 return $this->markAsFailed($signalement);
             }
 
+            return $this->persist($signalement, $parsedData);
           } catch (ConnectionException $e) {
            Log::error("AI timeout for signalement {$signalement->id}: " . $e->getMessage());
 
