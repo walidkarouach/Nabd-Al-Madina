@@ -18,8 +18,15 @@ use App\Enums\UserRole;
 
 class User extends Authenticatable
 {
-    public function departement() { return $this->belongsTo(Departement::class, 'department_id'); }
-public function signalements() { return $this->hasMany(Signalement::class); }
+    public function departement(): \Illuminate\Database\Eloquent\Relations\BelongsTo
+    {
+        return $this->belongsTo(Departement::class, 'department_id');
+    }
+
+    public function signalements(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(Signalement::class);
+    }
     /** @use HasFactory<UserFactory> */
     use HasApiTokens, HasFactory, Notifiable;
 

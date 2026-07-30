@@ -115,7 +115,16 @@ PROMPT;
 
         $decoded = json_decode($content, true);
 
-        return is_array($decoded) ? $decoded : null;
+        if (!is_array($decoded)) {
+            return null;
+        }
+
+        // Vérification des 5 champs requis (category, priority, urgency, summary, department)
+        if (!$this->validateFields($decoded)) {
+            return null;
+        }
+
+        return $decoded;
     }
 
     /**
@@ -156,11 +165,12 @@ PROMPT;
             }
         }
 
-        if ($departmentId === null && !empty($data['department'])) {
-            $deptName = (string) $data['department'];
-            $foundDept = Departement::where('nom', 'LIKE', "%{$deptName}%")->first();
-            if ($foundDept) {
-                $departmentId = $foundDept->id;
+        if ($departmentId === null) {
+            $deptName = $data['department'] ?? $data['department_name'] ?? null;
+            if (!empty($deptName)) {
+                $deptName = trim((string) $deptName);
+                $dept = Departement::firstOrCreate(['nom' => $deptName]);
+                $departmentId = $dept->id;
             }
         }
 

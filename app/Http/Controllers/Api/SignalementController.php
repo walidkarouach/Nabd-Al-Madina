@@ -89,9 +89,8 @@ class SignalementController extends Controller
     {
         Gate::authorize('update', $signalement);
 
-        $statusValue = $signalement->status instanceof SignalementStatus
-            ? $signalement->status->value
-            : (string) $signalement->status;
+        $status = $signalement->status;
+        $statusValue = $status instanceof SignalementStatus ? $status->value : (string) $status;
 
         // Restriction de sécurité : Seul l'auteur peut modifier le texte et seulement si statut nouveau
         if ($request->user()->id === $signalement->user_id && $statusValue !== SignalementStatus::Nouveau->value) {

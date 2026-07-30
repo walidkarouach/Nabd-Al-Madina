@@ -188,4 +188,87 @@ class NadaBoutaTasksTest extends TestCase
         ]);
         $resBlocked->assertForbidden();
     }
+
+    /**
+     * AI response missing required fields makes analysis fail.
+     */
+    public function test_ai_analysis_fails_when_required_fields_are_missing(): void
+    {
+        $citoyen = User::factory()->citoyen()->create();
+
+        Http::fake([
+            '*' => Http::response([
+                'choices' => [
+                    [
+                        'message' => [
+                            'content' => json_encode([
+                                'category' => 'Voirie',
+                                'priority' => 'high',
+                                // Missing urgency, summary, and department
+                            ])
+                        ]
+                    ]
+                ]
+            ], 200)
+        ]);
+
+        $payload = [
+            'texte' => 'Un énorme nid de poule s\'est formé sur l\'avenue Hassan II.',
+            'lat' => 33.5731,
+            'lng' => -7.5898,
+        ];
+
+        $response = $this->actingAs($citoyen)->postJson('/api/signalements', $payload);
+
+        $response->assertCreated();
+        $response->assertJsonPath('ai_analysis_status', 'echec');
+    }
+
+    /**
+     * AI analysis creates a new department when name is not found in database.
+     */
+    public function test_ai_analysis_creates_new_department_when_not_found_in_database(): void
+    {
+        $citoyen = User::factory()->citoyen()->create();
+
+        Http::fake([
+            '*' => Http::response([
+                'choices' => [
+                    [
+                        'message' => [
+                            'content' => json_encode([
+                                'category' => 'Éclairage public',
+                                'priority' => 'medium',
+                                'urgency' => 3,
+                                'summary' => 'Lampadaire en panne dans le quartier.',
+                                'department' => 'Eclairage Specifique', // Department doesn't exist yet
+                            ])
+                        ]
+                    ]
+                ]
+            ], 200)
+        ]);
+
+        $payload = [
+            'texte' => 'Le lampadaire de ma rue ne s\'allume plus depuis hier soir.',
+            'lat' => 33.5731,
+            'lng' => -7.5898,
+        ];
+
+        // Ensure department doesn't exist
+        $this->assertDatabaseMissing('departements', ['nom' => 'Eclairage Specifique']);
+
+        $response = $this->actingAs($citoyen)->postJson('/api/signalements', $payload);
+
+        $response->assertCreated();
+        $response->assertJsonPath('ai_analysis_status', 'succes');
+        $response->assertJsonPath('category', 'Éclairage public');
+
+        // It should have created the new department and linked it
+        $this->assertDatabaseHas('departements', ['nom' => 'Eclairage Specifique']);
+        $newDept = Departement::where('nom', 'Eclairage Specifique')->first();
+        $this->assertNotNull($newDept);
+
+        $response->assertJsonPath('department_id', $newDept->id);
+    }
 }
