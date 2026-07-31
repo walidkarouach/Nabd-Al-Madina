@@ -26,5 +26,6 @@ Route::middleware('auth:sanctum')->group(function () {
     // Endpoint US4 réservé aux agents municipaux
     Route::middleware('role:agent_municipal')->group(function () {
         Route::get('/signalements/{signalement}/similaires', [SignalementSimilarityController::class, 'index']);
+        Route::post('/signalements/{signalement}/valider-regroupement', [SignalementSimilarityController::class, 'validateGrouping']);
     });
 });
