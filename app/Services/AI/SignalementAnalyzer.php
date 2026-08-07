@@ -2,193 +2,213 @@
 
 namespace App\Services\AI;
 
+use App\Ai\Agents\SignalementClassifier;
 use App\Models\Departement;
 use App\Models\Signalement;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Throwable;
-use Illuminate\Http\Client\ConnectionException;
-
-
-
-
 
 class SignalementAnalyzer
 {
     /**
-     * Analyse un signalement via l'IA et met à jour ses données.
+     * Analyse un signalement avec Laravel AI SDK.
      */
     public function analyze(Signalement $signalement): Signalement
     {
         try {
-            $prompt = $this->buildPrompt($signalement);
-
-            $url = config('services.ai.url', 'https://api.openai.com/v1/chat/completions');
-            $key = config('services.ai.key', '');
-            $model = config('services.ai.model', 'gpt-4o-mini');
-
-            $response = Http::timeout(8)
-                ->withHeaders([
-                    'Authorization' => "Bearer {$key}",
-                    'Content-Type' => 'application/json',
+            $departements = Departement::query()
+                ->get(['id', 'nom'])
+                ->map(fn ($departement) => [
+                    'id' => $departement->id,
+                    'nom' => $departement->nom,
                 ])
-                ->post($url, [
-                    'model' => $model,
-                    'messages' => [
-                        [
-                            'role' => 'system',
-                            'content' => 'Tu es un assistant IA spécialisé dans l\'analyse des signalements d\'incidents urbains. Réponds uniquement en JSON valide sans aucun texte ni formatage markdown autour.'
-                        ],
-                        [
-                            'role' => 'user',
-                            'content' => $prompt
-                        ],
-                    ],
-                    'temperature' => 0.1,
-                ]);
+                ->values()
+                ->toArray();
 
-            if ($response->failed()) {
-                Log::warning("AI API call failed for signalement {$signalement->id}: " . $response->body());
+            $prompt = $this->buildPrompt(
+                $signalement,
+                $departements
+            );
+
+            $result = app(SignalementClassifier::class)->prompt($prompt);
+
+            if (is_object($result) && property_exists($result, 'structured') && is_array($result->structured)) {
+                $raw = $result->structured;
+            } elseif (is_array($result) || $result instanceof \ArrayAccess) {
+                $raw = $result;
+            } elseif (is_object($result) && method_exists($result, 'toArray')) {
+                $raw = $result->toArray();
+            } else {
+                Log::warning(
+                    "AI response is not valid for signalement {$signalement->id}"
+                );
+
                 return $this->markAsFailed($signalement);
             }
 
-            $rawContent = $response->json('choices.0.message.content') ?? $response->body();
-            $parsedData = $this->extractJson($rawContent);
+            $data = [
+                'category' => $raw['category'] ?? null,
+                'priority' => $raw['priority'] ?? null,
+                'urgency' => $raw['urgency'] ?? null,
+                'summary' => $raw['summary'] ?? null,
+                'department_id' => $raw['department_id'] ?? null,
+                'department' => $raw['department'] ?? null,
+            ];
 
-            if ($parsedData === null || !$this->validateFields($parsedData)) {
-                Log::warning("AI response parsing or field validation failed for signalement {$signalement->id}");
+            if (!$this->validateFields($data)) {
+                Log::warning(
+                    "AI response validation failed for signalement {$signalement->id}",
+                    ['data' => $data]
+                );
+
                 return $this->markAsFailed($signalement);
             }
 
-            return $this->persist($signalement, $parsedData);
-          } catch (ConnectionException $e) {
-           Log::error("AI timeout for signalement {$signalement->id}: " . $e->getMessage());
+            return $this->persist($signalement, $data);
+
+        } catch (Throwable $e) {
+
+            Log::error(
+                "Error analyzing signalement {$signalement->id}: {$e->getMessage()}",
+                [
+                    'exception' => get_class($e),
+                ]
+            );
 
             return $this->markAsFailed($signalement);
-
-          } catch (Throwable $e) {
-           Log::error("Error analyzing signalement {$signalement->id}: " . $e->getMessage());
-
-            return $this->markAsFailed($signalement);
-}
+        }
     }
 
     /**
-     * Construit un prompt strict forçant une réponse en JSON pur.
+     * Construit le prompt envoyé à l'agent IA.
      */
-    public function buildPrompt(Signalement $signalement): string
-    {
-        $departements = Departement::all(['id', 'nom'])->map(function ($dept) {
-            return "ID: {$dept->id} - Nom: {$dept->nom}";
-        })->implode("\n");
+    public function buildPrompt(
+        Signalement $signalement,
+        array $departements
+    ): string {
+
+        $departementsText = collect($departements)
+            ->map(fn ($departement) =>
+                "ID: {$departement['id']} - Nom: {$departement['nom']}"
+            )
+            ->implode("\n");
 
         return <<<PROMPT
-Analyse le signalement citoyen suivant et réponds STRICTEMENT avec un objet JSON pur sans aucun texte additionnel, explication ou balise markdown.
+Analyse le signalement citoyen suivant.
 
 Signalement :
 "{$signalement->texte}"
 
-La réponse JSON doit contenir EXACTEMENT les 5 champs suivants :
-1. "category": (string) La catégorie principale (ex: "Voirie", "Éclairage public", "Propreté", "Espaces verts", "Sécurité", "Assainissement").
-2. "priority": (string) Niveau de priorité. Valeurs autorisées STRICTEMENT : "low", "medium", "high".
-3. "urgency": (integer) Niveau d'urgence entre 1 et 5 inclusivement.
-4. "summary": (string) Résumé concis de l'incident en 1 à 2 phrases max.
-5. "department_id": (integer|null) L'ID du département compétent parmi la liste ci-dessous, ou null si aucun ne correspond.
+Voici la liste des départements existants :
 
-Liste des départements disponibles :
-{$departements}
+{$departementsText}
 
-Exemple de format attendu :
-{
-  "category": "Voirie",
-  "priority": "high",
-  "urgency": 4,
-  "summary": "Nid de poule dangereux sur la chaussée.",
-  "department_id": 1
-}
+Retourne une classification structurée.
+
+Contraintes importantes :
+
+1. category :
+Catégorie principale du problème.
+Exemples :
+- Voirie
+- Éclairage public
+- Propreté
+- Espaces verts
+- Sécurité
+- Eau
+- Accessibilité
+- Assainissement
+
+2. priority :
+Uniquement :
+- low
+- medium
+- high
+
+3. urgency :
+Nombre entier entre 1 et 5.
+
+4. summary :
+Résumé court du problème.
+
+5. department_id :
+Choisis uniquement un ID parmi les départements fournis ci-dessus.
+Si aucun département ne correspond, retourne null.
+
+Ne crée jamais un nouvel ID.
 PROMPT;
     }
 
     /**
-     * Nettoie et extrait le JSON de la réponse texte de l'IA.
-     */
-    public function extractJson(string $rawContent): ?array
-    {
-        $content = trim($rawContent);
-
-        // Supprimer les balises Markdown éventuelles ```json ... ```
-        if (preg_match('/```(?:json)?\s*(\{.*?\})\s*```/s', $content, $matches)) {
-            $content = $matches[1];
-        } elseif (preg_match('/\{.*\}/s', $content, $matches)) {
-            $content = $matches[0];
-        }
-
-        $decoded = json_decode($content, true);
-
-        if (!is_array($decoded)) {
-            return null;
-        }
-
-        // Vérification des 5 champs requis (category, priority, urgency, summary, department)
-        if (!$this->validateFields($decoded)) {
-            return null;
-        }
-
-        return $decoded;
-    }
-
-    /**
-     * Vérifie la présence des 5 champs requis dans le tableau extrait.
+     * Valide les données retournées par l'IA.
      */
     public function validateFields(array $data): bool
     {
-        $hasCategory = !empty($data['category']);
-        $hasPriority = isset($data['priority']);
-        $hasUrgency = isset($data['urgency']);
-        $hasSummary = !empty($data['summary']);
-        $hasDepartment = array_key_exists('department_id', $data) || array_key_exists('department', $data) || array_key_exists('department_name', $data);
+        if (empty($data['category'])) {
+            return false;
+        }
 
-        return $hasCategory && $hasPriority && $hasUrgency && $hasSummary && $hasDepartment;
+        if (!in_array(
+            $data['priority'] ?? null,
+            ['low', 'medium', 'high'],
+            true
+        )) {
+            return false;
+        }
+
+        if (!isset($data['urgency'])) {
+            return false;
+        }
+
+        if (
+            !is_int($data['urgency']) ||
+            $data['urgency'] < 1 ||
+            $data['urgency'] > 5
+        ) {
+            return false;
+        }
+
+        if (empty($data['summary'])) {
+            return false;
+        }
+
+        return true;
     }
 
     /**
-     * Persiste les résultats de l'analyse avec revalidation stricte de chaque champ.
+     * Sauvegarde le résultat de l'analyse.
      */
-    public function persist(Signalement $signalement, array $data): Signalement
-    {
-        // Validation et assainissement de priority
-        $priorityValue = strtolower(trim((string) ($data['priority'] ?? 'medium')));
-        if (!in_array($priorityValue, ['low', 'medium', 'high'], true)) {
-            $priorityValue = 'medium';
-        }
+    public function persist(
+        Signalement $signalement,
+        array $data
+    ): Signalement {
 
-        // Urgency clampé strictement entre 1 et 5
-        $urgencyValue = (int) ($data['urgency'] ?? 3);
-        $urgencyValue = max(1, min(5, $urgencyValue));
-
-        // Résolution du department_id
         $departmentId = null;
-        if (!empty($data['department_id']) && is_numeric($data['department_id'])) {
-            $deptId = (int) $data['department_id'];
-            if (Departement::where('id', $deptId)->exists()) {
-                $departmentId = $deptId;
-            }
-        }
 
-        if ($departmentId === null) {
-            $deptName = $data['department'] ?? $data['department_name'] ?? null;
-            if (!empty($deptName)) {
-                $deptName = trim((string) $deptName);
-                $dept = Departement::firstOrCreate(['nom' => $deptName]);
-                $departmentId = $dept->id;
+        if (
+            !empty($data['department_id']) &&
+            is_numeric($data['department_id'])
+        ) {
+            $departmentId = (int) $data['department_id'];
+
+            if (!Departement::where('id', $departmentId)->exists()) {
+                $departmentId = null;
             }
+        } elseif (!empty($data['department']) && is_string($data['department'])) {
+            $deptName = trim($data['department']);
+            $departement = Departement::firstOrCreate(['nom' => $deptName]);
+            $departmentId = $departement->id;
+        } elseif (!empty($data['department_id']) && is_string($data['department_id'])) {
+            $deptName = trim($data['department_id']);
+            $departement = Departement::firstOrCreate(['nom' => $deptName]);
+            $departmentId = $departement->id;
         }
 
         $signalement->update([
-            'category' => (string) ($data['category'] ?? 'Général'),
-            'priority' => $priorityValue,
-            'urgency' => $urgencyValue,
-            'summary' => (string) ($data['summary'] ?? ''),
+            'category' => $data['category'],
+            'priority' => $data['priority'],
+            'urgency' => $data['urgency'],
+            'summary' => $data['summary'],
             'department_id' => $departmentId,
             'ai_analysis_status' => 'succes',
         ]);
@@ -197,10 +217,12 @@ PROMPT;
     }
 
     /**
-     * Marque l'analyse comme échouée sans bloquer ni perdre le signalement.
+     * Marque l'analyse comme échouée.
      */
-    public function markAsFailed(Signalement $signalement): Signalement
-    {
+    public function markAsFailed(
+        Signalement $signalement
+    ): Signalement {
+
         $signalement->update([
             'ai_analysis_status' => 'echec',
         ]);

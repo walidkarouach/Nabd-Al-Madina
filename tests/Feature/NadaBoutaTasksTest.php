@@ -2,12 +2,12 @@
 
 namespace Tests\Feature;
 
+use App\Ai\Agents\SignalementClassifier;
 use App\Enums\SignalementStatus;
 use App\Models\Departement;
 use App\Models\Signalement;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class NadaBoutaTasksTest extends TestCase
@@ -39,22 +39,14 @@ class NadaBoutaTasksTest extends TestCase
         $departement = Departement::factory()->create(['nom' => 'Voirie']);
         $citoyen = User::factory()->citoyen()->create();
 
-        Http::fake([
-            '*' => Http::response([
-                'choices' => [
-                    [
-                        'message' => [
-                            'content' => json_encode([
-                                'category' => 'Voirie',
-                                'priority' => 'high',
-                                'urgency' => 4,
-                                'summary' => 'Grand trou dangereux dans la rue principale.',
-                                'department_id' => $departement->id,
-                            ])
-                        ]
-                    ]
-                ]
-            ], 200)
+        SignalementClassifier::fake([
+            [
+                'category' => 'Voirie',
+                'priority' => 'high',
+                'urgency' => 4,
+                'summary' => 'Grand trou dangereux dans la rue principale.',
+                'department_id' => $departement->id,
+            ],
         ]);
 
         $payload = [
@@ -87,9 +79,10 @@ class NadaBoutaTasksTest extends TestCase
     {
         $citoyen = User::factory()->citoyen()->create();
 
-        // Simulation d'une erreur serveur / timeout 500
-        Http::fake([
-            '*' => Http::response('AI Service Unavailable', 500)
+        SignalementClassifier::fake([
+            function () {
+                throw new \RuntimeException('AI Service Unavailable');
+            },
         ]);
 
         $payload = [
@@ -196,24 +189,16 @@ class NadaBoutaTasksTest extends TestCase
     {
         $citoyen = User::factory()->citoyen()->create();
 
-        Http::fake([
-            '*' => Http::response([
-                'choices' => [
-                    [
-                        'message' => [
-                            'content' => json_encode([
-                                'category' => 'Voirie',
-                                'priority' => 'high',
-                                // Missing urgency, summary, and department
-                            ])
-                        ]
-                    ]
-                ]
-            ], 200)
+        SignalementClassifier::fake([
+            [
+                'category' => 'Voirie',
+                'priority' => 'high',
+                // Missing urgency and summary
+            ],
         ]);
 
         $payload = [
-            'texte' => 'Un énorme nid de poule s\'est formé sur l\'avenue Hassan II.',
+            'texte' => 'Un énorme nid de poule s\'est formed sur l\'avenue Hassan II.',
             'lat' => 33.5731,
             'lng' => -7.5898,
         ];
@@ -231,22 +216,14 @@ class NadaBoutaTasksTest extends TestCase
     {
         $citoyen = User::factory()->citoyen()->create();
 
-        Http::fake([
-            '*' => Http::response([
-                'choices' => [
-                    [
-                        'message' => [
-                            'content' => json_encode([
-                                'category' => 'Éclairage public',
-                                'priority' => 'medium',
-                                'urgency' => 3,
-                                'summary' => 'Lampadaire en panne dans le quartier.',
-                                'department' => 'Eclairage Specifique', // Department doesn't exist yet
-                            ])
-                        ]
-                    ]
-                ]
-            ], 200)
+        SignalementClassifier::fake([
+            [
+                'category' => 'Éclairage public',
+                'priority' => 'medium',
+                'urgency' => 3,
+                'summary' => 'Lampadaire en panne dans le quartier.',
+                'department' => 'Eclairage Specifique',
+            ],
         ]);
 
         $payload = [
