@@ -2,12 +2,12 @@
 
 namespace Tests\Feature;
 
+use App\Ai\Agents\SignalementClassifier;
 use App\Models\Departement;
 use App\Models\Incident;
 use App\Models\Signalement;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\Http;
 use Tests\TestCase;
 
 class SignalementCrudTest extends TestCase
@@ -16,7 +16,7 @@ class SignalementCrudTest extends TestCase
 
     /**
      * Un citoyen peut créer un signalement en texte libre : le POST déclenche
-     * la création en base ET l'analyse IA (simulée via Http::fake) en une seule requête,
+     * la création en base ET l'analyse IA en une seule requête,
      * qui enrichit automatiquement le signalement (catégorie, priorité, résumé).
      */
     public function test_un_citoyen_peut_creer_un_signalement_en_texte_libre(): void
@@ -24,23 +24,14 @@ class SignalementCrudTest extends TestCase
         $departement = Departement::factory()->create(['nom' => 'Voirie']);
         $citoyen = User::factory()->citoyen()->create();
 
-        // Simule complètement l'appel IA sans effectuer de requête réseau réelle.
-        Http::fake([
-            '*' => Http::response([
-                'choices' => [
-                    [
-                        'message' => [
-                            'content' => json_encode([
-                                'category' => 'Voirie',
-                                'priority' => 'high',
-                                'urgency' => 4,
-                                'summary' => 'Nid de poule dangereux signalé par un citoyen.',
-                                'department_id' => $departement->id,
-                            ]),
-                        ],
-                    ],
-                ],
-            ], 200),
+        SignalementClassifier::fake([
+            [
+                'category' => 'Voirie',
+                'priority' => 'high',
+                'urgency' => 4,
+                'summary' => 'Nid de poule dangereux signalé par un citoyen.',
+                'department_id' => $departement->id,
+            ],
         ]);
 
         $payload = [
@@ -69,9 +60,6 @@ class SignalementCrudTest extends TestCase
             'ai_analysis_status' => 'succes',
             'department_id' => $departement->id,
         ]);
-
-        // Un seul appel HTTP a été effectué vers le service IA.
-        Http::assertSentCount(1);
     }
 
     /**
