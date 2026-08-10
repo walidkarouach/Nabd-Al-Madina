@@ -5,12 +5,23 @@ namespace App\Ai\Agents;
 use Illuminate\Contracts\JsonSchema\JsonSchema;
 use Laravel\Ai\Contracts\Agent;
 use Laravel\Ai\Contracts\HasStructuredOutput;
+use Laravel\Ai\Enums\Lab;
 use Laravel\Ai\Promptable;
 
 
 class SignalementClassifier implements Agent, HasStructuredOutput
 {
     use Promptable;
+
+    public function provider(): Lab|string
+    {
+        return Lab::Groq;
+    }
+
+    public function model(): string
+    {
+        return env('GROQ_MODEL', 'openai/gpt-oss-120b');
+    }
 
     public function instructions(): string
     {
@@ -55,7 +66,8 @@ PROMPT;
 
             'department_id' => $schema
                 ->integer()
-                ->nullable(),
+                ->nullable()
+                ->required(),
         ];
     }
 }
